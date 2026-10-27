@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>두더지 잡기</title>
+<style>
+  :root {
+    --sky: #bfe6ff;
+    --grass: #7cc75b;
+    --grass-dark: #5aa63d;
+    --dirt: #6b4226;
+    --dirt-dark: #3e2414;
+    --text: #2b2b2b;
+    --accent: #ff6b4a;
+    --gold: #ffc83d;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    background: linear-gradient(var(--sky) 0 30%, var(--grass) 30% 100%);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  h1 { margin: 8px 0 4px; font-size: clamp(24px, 6vw, 36px); }
+  .hud {
+    display: flex; gap: 10px; width: 100%; max-width: 480px;
+    justify-content: space-between; margin: 8px 0 14px;
+  }
+  .hud div {
+    flex: 1; background: #fff; border-radius: 12px; padding: 8px 4px;
+    text-align: center; box-shadow: 0 3px 0 rgba(0,0,0,.15);
+  }
+  .hud small { display: block; font-size: 12px; color: #777; }
+  .hud b { font-size: 22px; }
+  .board {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    width: 100%; max-width: 480px;
+    background: var(--grass-dark); padding: 14px; border-radius: 20px;
+  }
+  .hole {
+    position: relative; aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 60%, var(--dirt-dark) 0 45%, var(--dirt) 46% 100%);
+    overflow: hidden; cursor: pointer;
+  }
+  .mole {
+    position: absolute; left: 50%; bottom: -100%;
+    transform: translateX(-50%);
+    font-size: clamp(44px, 15vw, 80px); line-height: 1;
+    transition: bottom .12s ease-out;
+    pointer-events: none;
+  }
+  .hole.up .mole { bottom: 12%; }
+  .hole.hit .mole { transform: translateX(-50%) scale(.8) rotate(-15deg); filter: grayscale(.6); }
+  .pop {
+    position: absolute; left: 50%; top: 10%; transform: translateX(-50%);
+    font-weight: 800; font-size: 22px; color: #fff; text-shadow: 0 2px 0 #000;
+    animation: rise .6s ease-out forwards; pointer-events: none;
+  }
+  @keyframes rise { to { top: -20%; opacity: 0; } }
+  button {
+    margin-top: 18px; font-size: 20px; font-weight: 700; border: 0;
+    padding: 14px 36px; border-radius: 999px; background: var(--accent); color: #fff;
+    box-shadow: 0 4px 0 #c24427; cursor: pointer;
+  }
+  button:active { transform: translateY(3px); box-shadow: 0 1px 0 #c24427; }
+  button:disabled { opacity: .5; }
+  .msg { margin-top: 12px; min-height: 24px; font-weight: 600; text-align: center; }
+  .help { margin-top: 8px; font-size: 13px; color: #234; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>🔨 두더지 잡기</h1>
+
+  <div class="hud">
+    <div><small>점수</small><b id="score">0</b></div>
+    <div><small>남은 시간</small><b id="time">30</b></div>
+    <div><small>최고 기록</small><b id="best">0</b></div>
+  </div>
+
+  <div class="board" id="board"></div>
+
+  <button id="start">게임 시작</button>
+  <div class="msg" id="msg">30초 동안 두더지를 최대한 많이 잡아보세요!</div>
+  <div class="help">🐹 +1점 · ⭐ 황금 두더지 +3점 · 💣 폭탄 -2점</div>
+
+<script>
+  const GAME_SECONDS = 30;
+  const board = document.getElementById('board');
+  const scoreEl = document.getElementById('score');
+  const timeEl = document.getElementById('time');
+  const bestEl = document.getElementById('best');
+  const startBtn = document.getElementById('start');
+  const msgEl = document.getElementById('msg');
+
+  const KINDS = {
+    mole: { emoji: '🐹', points: 1 },
+    gold: { emoji: '🌟', points: 3 },
+    bomb: { emoji: '💣', points: -2 },
+  };
+
+  let score = 0, timeLeft = GAME_SECONDS, playing = false;
+  let tickTimer = null, spawnTimer = null;
+  let best = 0;
+  try { best = Number(localStorage.getItem('mole-best')) || 0; } catch (e) {}
+  bestEl.textContent = best;
+
+  const holes = [];
+  for (let i = 0; i < 9; i++) {
+    const hole = document.createElement('div');
+    hole.className = 'hole';
+    hole.innerHTML = '<div class="mole"></div>';
+    hole.addEventListener('pointerdown', () => whack(hole));
+    board.appendChild(hole);
+    holes.push(hole);
+  }
+
+  function pickKind() {
+    const r = Math.random();
+    if (r < 0.1) return 'gold';
+    if (r < 0.25) return 'bomb';
+    return 'mole';
+  }
+
+  function spawn() {
+    if (!playing) return;
+    const free = holes.filter(h => !h.classList.contains('up'));
+    if (free.length) {
+      const hole = free[Math.floor(Math.random() * free.length)];
+      const kind = pickKind();
+      hole.dataset.kind = kind;
+      hole.querySelector('.mole').textContent = KINDS[kind].emoji;
+      hole.classList.remove('hit');
+      hole.classList.add('up');
+      // 시간이 지날수록 빨리 숨는다
+      const stay = Math.max(450, 1100 - (GAME_SECONDS - timeLeft) * 22);
+      hole.hideTimer = setTimeout(() => hole.classList.remove('up'), stay);
+    }
+    const next = Math.max(300, 800 - (GAME_SECONDS - timeLeft) * 16);
+    spawnTimer = setTimeout(spawn, next);
+  }
+
+  function whack(hole) {
+    if (!playing || !hole.classList.contains('up') || hole.classList.contains('hit')) return;
+    const points = KINDS[hole.dataset.kind].points;
+    score = Math.max(0, score + points);
+    scoreEl.textContent = score;
+    hole.classList.add('hit');
+    clearTimeout(hole.hideTimer);
+    setTimeout(() => hole.classList.remove('up'), 200);
+
+    const pop = document.createElement('div');
+    pop.className = 'pop';
+    pop.textContent = (points > 0 ? '+' : '') + points;
+    pop.style.color = points > 0 ? (points > 1 ? 'var(--gold)' : '#fff') : '#ff4d4d';
+    hole.appendChild(pop);
+    setTimeout(() => pop.remove(), 600);
+    if (navigator.vibrate) navigator.vibrate(points > 0 ? 20 : 120);
+  }
+
+  function start() {
+    score = 0; timeLeft = GAME_SECONDS; playing = true;
+    scoreEl.textContent = 0; timeEl.textContent = timeLeft;
+    startBtn.disabled = true;
+    msgEl.textContent = '잡아라!';
+    holes.forEach(h => h.classList.remove('up', 'hit'));
+    tickTimer = setInterval(() => {
+      timeLeft--;
+      timeEl.textContent = timeLeft;
+      if (timeLeft <= 0) end();
+    }, 1000);
+    spawn();
+  }
+
+  function end() {
+    playing = false;
+    clearInterval(tickTimer);
+    clearTimeout(spawnTimer);
+    holes.forEach(h => { clearTimeout(h.hideTimer); h.classList.remove('up'); });
+    startBtn.disabled = false;
+    startBtn.textContent = '다시 하기';
+    if (score > best) {
+      best = score;
+      bestEl.textContent = best;
+      try { localStorage.setItem('mole-best', best); } catch (e) {}
+      msgEl.textContent = `🎉 신기록! ${score}점`;
+    } else {
+      msgEl.textContent = `끝! ${score}점 (최고 ${best}점)`;
+    }
+  }
+
+  startBtn.addEventListener('click', start);
+</script>
+</body>
+</html>
